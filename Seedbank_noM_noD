@@ -1,0 +1,107 @@
+initialize() {
+    initializeSLiMModelType("nonWF");
+    initializeSLiMOptions();
+    defineConstant("MU", 1e-7); 
+    initializeMutationRate(MU);
+    initializeMutationType("m1", 0.5, "f", 0.0);
+    m1.convertToSubstitution = T;
+    initializeGenomicElementType("g1", m1, 1.0);
+    initializeGenomicElement(g1, 0, 99999); 
+    initializeRecombinationRate(1e-7);
+
+    defineConstant("N", 500);
+    defineConstant("K", 1);    
+    defineConstant("epsilon", 0.5);
+    defineConstant("M", asInteger(N/K));  // Seed bank size
+    defineConstant("BURN_IN", 20*(N+M)); 
+    initializeTreeSeq();
+    
+}
+
+1 early() {
+    sim.addSubpop("p1", N);  // Active population
+    sim.addSubpop("p2", M);  // Seed bank
+
+}
+
+mutation() {
+    if (sim.cycle > BURN_IN & subpop == p2) {
+        return F;  // Suppress mutations in p2
+    }
+    return T;  // Allow mutations in other subpopulations or before burn-in
+}
+
+reproduction(p1) {
+    parents1 = p1.sampleIndividuals(N, replace=T);
+    parents2 = p1.sampleIndividuals(N, replace=T);
+    for (i in seqLen(N)) {
+        offspring = p1.addCrossed(parents1[i], parents2[i]);
+    }
+   
+    self.active = 0;  // Deactivate itself to prevent being called again
+}
+
+reproduction(p2) {
+if (sim.cycle <= BURN_IN) {
+        parents1 = sample(p2.individuals, M, replace=T);
+        parents2 = sample(p2.individuals, M, replace=T);
+        for (i in seqLen(M)) {
+            offspring = p2.addCrossed(parents1[i], parents2[i]);
+        }
+        self.active = 0;
+    } else {
+        for (indiv in p2.individuals) {
+            // Tag the original individual as a "parent"
+            indiv.tag = 1;
+
+            // Clone the individual and tag the clone as "new"
+            new_clone = p2.addCloned(indiv);
+            new_clone.tag = 0;  // Mark the clone as active/new
+            new_clone.age = indiv.age;
+        }
+    }
+    
+    self.active = 0;  // Deactivate this reproduction event
+}
+  
+
+survival(p1) {
+   return (individual.age == 0);
+}
+
+survival(p2) {
+   if (sim.cycle > BURN_IN) {
+       // After burn-in, dormant individuals in p2 survive indefinitely
+       return (individual.age >= 0);
+   }
+   return (individual.age == 0);  // Standard survival during burn-in
+}
+
+1: late() {
+ if (sim.cycle > BURN_IN) {
+        // Remove original individuals
+        to_remove = p2.individuals[p2.individuals.tag == 1];
+        sim.killIndividuals(to_remove);
+    }
+        num_new_offspring = asInteger((1 - epsilon) * N);
+        num_germinating_seeds = N - num_new_offspring;
+    // Sample new offspring
+    offspring = p1.individuals[p1.individuals.age == 0];
+    new_offspring = sample(offspring, num_new_offspring);
+
+    // Sample seeds to germinate from p2
+    germinating_seeds = sample(p2.individuals, num_germinating_seeds, replace=F);
+    germinating_seeds.age = 0;
+
+    // Move offspring to the seed bank
+    to_SB = setDifference(offspring, new_offspring);
+
+    // Update populations
+    p1.takeMigrants(new_offspring);       // Add new offspring
+    p1.takeMigrants(germinating_seeds);   // Add reactivated seeds
+    p2.takeMigrants(to_SB);               // Move individuals to the seed bank
+}
+
+100*(N+M) late() {
+sim.treeSeqOutput("SB_" + K + "_R_" +r+ "_rep_"+rep+".trees");
+}
